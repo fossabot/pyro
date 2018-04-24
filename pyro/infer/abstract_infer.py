@@ -1,103 +1,73 @@
-from pyro.poutine import Poutine
+from __future__ import absolute_import, division, print_function
+
+from abc import abstractmethod, ABCMeta
+from six import add_metaclass
+
 import torch
 
-# overload call function here?
+import pyro.poutine as poutine
+from pyro.distributions import Empirical
 
 
-class AbstractInfer(object):
+class EmpiricalMarginal(Empirical):
     """
-    Infer class must implement: _pyro_sample, _pyro_observe,
-    _pyro_on_exit, _pyro_param, _pyro_map_data
-    """
+    :param trace_dist: a TracePosterior instance representing a Monte Carlo posterior.
 
+    Marginal distribution, that wraps over a TracePosterior object to provide a
+    a marginal over one or more latent sites or the return values of the
+    TracePosterior's model. If multiple sites are specified, they must have the
+    same tensor shape.
+    """
+    def __init__(self, trace_posterior, sites=None, validate_args=None):
+        assert isinstance(trace_posterior, TracePosterior), \
+            "trace_dist must be trace posterior distribution object"
+        super(EmpiricalMarginal, self).__init__(validate_args=validate_args)
+        if sites is None:
+            sites = "_RETURN"
+        self._populate_traces(trace_posterior, sites)
+
+    def _populate_traces(self, trace_posterior, sites):
+        assert isinstance(sites, (list, str))
+        for tr, log_weight in zip(trace_posterior.exec_traces, trace_posterior.log_weights):
+            value = tr.nodes[sites]["value"] if isinstance(sites, str) else \
+                torch.stack([tr.nodes[site]["value"] for site in sites], 0)
+            self.add(value, log_weight=log_weight)
+
+
+@add_metaclass(ABCMeta)
+class TracePosterior(object):
+    """
+    Abstract TracePosterior object from which posterior inference algorithms inherit.
+    When run, collects a bag of execution traces from the approximate posterior.
+    This is designed to be used by other utility classes like `EmpiricalMarginal`,
+    that need access to the collected execution traces.
+    """
     def __init__(self):
-        pass
+        self._init()
 
-# extend Poutine -- switch to this context when appropriate
+    def _init(self):
+        self.log_weights = []
+        self.exec_traces = []
 
-
-class LWCopoutine(Poutine):
-    # every time
-    def _enter_poutine(self, *args, **kwargs):
+    @abstractmethod
+    def _traces(self, *args, **kwargs):
         """
-        When model execution begins
+        Abstract method implemented by classes that inherit from `TracePosterior`.
+
+        :return: Generator over ``(exec_trace, weight)``.
         """
-        self.current_score = 0
+        raise NotImplementedError("inference algorithm must implement _traces")
 
-    def _pyro_sample(self, name, dist):
+    def run(self, *args, **kwargs):
         """
-        Simply sample from distribution
+        Calls `self._traces` to populate execution traces from a stochastic
+        Pyro model.
+
+        :param args: optional args taken by `self._traces`.
+        :param kwargs: optional keywords args taken by `self._traces`.
         """
-        return dist()
-
-    def _pyro_observe(self, name, dist, val):
-        """
-        Get log_pdf of sample, add to ongoing scoring
-        """
-        logp = dist.log_pdf(val)
-        self.current_score += logp
-        return val
-
-
-class LikelihoodWeighting(AbstractInfer):
-
-    def __init__(self, model, *args, **kwargs):
-        """
-        Call parent class initially, then setup the couroutines to run
-        """
-        # initialize
-        super(LikelihoodWeighting, self).__init__()
-
-        # wrap the model function with a LWCoupoutine
-        # this will push and pop state
-        self.model = LWCopoutine(model)
-
-        # defining here, but will be updated at runner time
-        self.current_score = 0.
-        self.samples = []
-
-    def runner(self, num_samples, *args, **kwargs):
-        """
-        Main function of an Infer object, automatically switches context with copoutine
-        """
-        # setup sample to hold
-        samples = []
-
-        for i in range(num_samples):
-            # push and pop stack handled by copoutine
-            # What about models which take inputs?
-            rv = self.model(*args, **kwargs)
-
-            # add to sample state
-            samples.append([i, rv, self.model.current_score])
-
-        # send back array of samples to be consumed elsewhere
-        return samples
-
-#
-# class LWMarginal(object):
-#   # takes a trace distribution and consumes
-#   def __call__(trace_dist, num_samples, *args, **kwargs):
-#     # grab num samples from the trace dist, then consume
-# 	  concrete = trace_dist.runner(num_samples)
-
-
-def lw_expectation(trace_dist, functional, num_samples):
-    # running var
-    accum_so_far = 0.
-    sum_weight = 0.
-
-    # sample from trace_dist
-    samples = trace_dist.runner(num_samples)
-
-    # loop over the sample tuples
-    for i, rv, cur_score in samples:
-
-        # not necessarily efficient torch.exp call x2, fix later
-        sum_weight += torch.exp(cur_score)
-
-        # apply function to return value, multiply by exp(cur_score)
-        accum_so_far += functional(rv) * torch.exp(cur_score)
-
-    #
-    return accum_so_far / sum_weight
+        self._init()
+        for tr, logit in poutine.block(self._traces)(*args, **kwargs):
+            self.exec_traces.append(tr)
+            self.log_weights.append(logit)
+        return self

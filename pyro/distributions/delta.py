@@ -1,54 +1,61 @@
+from __future__ import absolute_import, division, print_function
+
+import numbers
+
 import torch
-from torch.autograd import Variable
+from torch.distributions import constraints
 
-from pyro.distributions.distribution import Distribution
+from pyro.distributions.torch_distribution import TorchDistribution
+from pyro.distributions.util import sum_rightmost
 
 
-class Delta(Distribution):
+class Delta(TorchDistribution):
     """
-    Delta Distribution - probability of 1 at `v`
+    Degenerate discrete distribution (a single point).
+
+    Discrete distribution that assigns probability one to the single element in
+    its support. Delta distribution parameterized by a random choice should not
+    be used with MCMC based inference, as doing so produces incorrect results.
+
+    :param torch.Tensor v: The single support element.
+    :param torch.Tensor log_density: An optional density for this Delta. This
+        is useful to keep the class of :class:`Delta` distributions closed
+        under differentiable transformation.
+    :param int event_dim: Optional event dimension, defaults to zero.
     """
+    has_rsample = True
+    arg_constraints = {'v': constraints.real, 'log_density': constraints.real}
+    support = constraints.real
 
-    def _sanitize_input(self, v):
-        if v is not None:
-            # stateless distribution
-            return v
-        elif self.v is not None:
-            # stateful distribution
-            return self.v
-        else:
-            raise ValueError("Parameter(s) were None")
-
-    def __init__(self, v=None, batch_size=1, *args, **kwargs):
-        """
-        Params:
-          `v` - value
-        """
+    def __init__(self, v, log_density=0.0, event_dim=0, validate_args=None):
+        if event_dim > v.dim():
+            raise ValueError('Expected event_dim <= v.dim(), actual {} vs {}'.format(event_dim, v.dim()))
+        batch_dim = v.dim() - event_dim
+        batch_shape = v.shape[:batch_dim]
+        event_shape = v.shape[batch_dim:]
+        if isinstance(log_density, numbers.Number):
+            log_density = v.new_empty(batch_shape).fill_(log_density)
+        elif log_density.shape != batch_shape:
+            raise ValueError('Expected log_density.shape = {}, actual {}'.format(
+                log_density.shape, batch_shape))
         self.v = v
-        if v is not None:
-            if v.dim() == 1 and batch_size > 1:
-                self.v = v.expand(v, 0)
-        super(Delta, self).__init__(*args, **kwargs)
+        self.log_density = log_density
+        super(Delta, self).__init__(batch_shape, event_shape, validate_args=validate_args)
 
-    def sample(self, v=None, *args, **kwargs):
-        _v = self._sanitize_input(v)
-        if isinstance(_v, Variable):
-            return _v
-        return Variable(_v)
+    def rsample(self, sample_shape=torch.Size()):
+        shape = sample_shape + self.v.shape
+        return self.v.expand(shape)
 
-    def batch_log_pdf(self, x, v=None, batch_size=1, *args, **kwargs):
-        _v = self._sanitize_input(v)
-        if x.dim == 1:
-            x = x.expand(batch_size, 0)
-        return (torch.eq(x, _v.expand_as(x)) - 1).float() * 999999
+    def log_prob(self, x):
+        v = self.v.expand(self.shape())
+        log_prob = x.new_tensor(x == v).log()
+        log_prob = sum_rightmost(log_prob, self.event_dim)
+        return log_prob + self.log_density
 
-    def log_pdf(self, x, v=None, *args, **kwargs):
-        _v = self._sanitize_input(v)
-        if torch.equal(x.data, _v.data.expand_as(x.data)):
-            return Variable(torch.zeros(1))
-        return Variable(torch.Tensor([-float("inf")]))
+    @property
+    def mean(self):
+        return self.v
 
-    def support(self, v=None, *args, **kwargs):
-        _v = self._sanitize_input(v)
-        # univariate case
-        return (Variable(_v.data.index(i)) for i in range(_v.size(0)))
+    @property
+    def variance(self):
+        return torch.zeros_like(self.v)

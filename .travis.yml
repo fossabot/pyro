@@ -1,33 +1,84 @@
 language: python
-python:
-    - 2.7
-    - 3.5
 
-sudo: required
+sudo: true
 
-before_install:
-    - sudo apt-get update -qq
-    - sudo apt-get install libblas-dev liblapack-dev libatlas-base-dev gfortran
+env:
+    global:
+        - PYTHONPATH=$PWD:$PYTHONPATH
 
 install:
-    # this will be in setup.py
-    - pip install numpy scipy cloudpickle
-    # install pytorch and its dependencies
-    - if [[ "$TRAVIS_PYTHON_VERSION" == "2.7" ]]; then
-          pip install http://download.pytorch.org/whl/cu75/torch-0.1.12.post2-cp27-none-linux_x86_64.whl;
-      else
-          pip install http://download.pytorch.org/whl/cu75/torch-0.1.12.post2-cp35-cp35m-linux_x86_64.whl;
-      fi
-    - pip install torchvision
+    # Install PyTorch wheel using the install script
+    - bash scripts/install_pytorch.sh
+    - pip install .[test]
+    - pip freeze
 
-script:
-    - PYTHONPATH=$PWD:$PYTHONPATH ./tests/run_tests.sh
+branches:
+    only:
+        - master
+        - dev
 
-matrix:
+jobs:
     fast_finish: true
     include:
-        env: LINT_CHECK
-        python: "2.7"
-        addons: true
-        install: pip install flake8
-        script: flake8
+        - stage: lint
+          python: 2.7
+          before_install: pip install flake8 nbstripout nbformat
+          install:
+          script:
+              - make lint
+              #- make scrub;
+              #  git diff-index --quiet HEAD
+        - stage: auxiliary modules
+          python: 2.7
+          env: STAGE=docs
+          script:
+              - pip install -r docs/requirements.txt
+              - make docs
+        - stage: perf
+          if: type = cron
+          python: 2.7
+          env: STAGE=perf
+          script:
+              - pip install -e .[profile]
+              - make perf-test
+        - python: 3.5
+          if: type = cron
+          env: STAGE=perf
+          script:
+              - pip install -e .[profile]
+              - make perf-test
+        - stage: profiler
+          python: 2.7
+          env: STAGE=profiler
+          script:
+              - pip install -e .[profile]
+              - python -m profiler.distributions
+        - stage: unit test
+          python: 2.7
+          env: STAGE=unit
+          script: pytest -vs --cov=pyro --stage unit --durations 20
+        - python: 2.7
+          env: STAGE=examples
+          script:
+              - pytest -vs --cov=pyro --stage test_examples
+              - CI=1 grep -l smoke_test tutorial/source/*.ipynb | xargs grep -L 'smoke_test = False' \
+                  | xargs pytest -vx --nbval-lax --current-env
+        - python: 3.5
+          env: STAGE=unit
+          script: pytest -vs --cov=pyro --stage unit --durations 20
+        - python: 3.5
+          env: STAGE=examples
+          script: pytest -vs --cov=pyro --stage test_examples
+        - stage: integration test
+          python: 2.7
+          env: STAGE=integration_batch_1
+          script: pytest -vs --cov=pyro --stage integration_batch_1 --durations 10
+        - python: 2.7
+          env: STAGE=integration_batch_2
+          script: pytest -vs --cov=pyro --stage integration_batch_2 --durations 10
+        - python: 3.5
+          env: STAGE=integration_batch_1
+          script: pytest -vs --cov=pyro --stage integration_batch_1 --durations 10
+        - python: 3.5
+          env: STAGE=integration_batch_2
+          script: pytest -vs --cov=pyro --stage integration_batch_2 --durations 10

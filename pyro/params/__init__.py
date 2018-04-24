@@ -1,15 +1,9 @@
-import pyro
+from __future__ import absolute_import, division, print_function
 
+from pyro.params.param_store import module_from_param_with_module_name, param_with_module_name, user_param_name
 
-def param_with_module_name(pyro_name, param_name):
-    return pyro._MODULE_NAMESPACE_DIVIDER.join([pyro_name, param_name])
-
-
-def module_from_param_with_module_name(param_name):
-    return param_name.split(pyro._MODULE_NAMESPACE_DIVIDER)[0]
-
-
-def user_param_name(param_name):
-    if pyro._MODULE_NAMESPACE_DIVIDER in param_name:
-        return param_name.split(pyro._MODULE_NAMESPACE_DIVIDER)[1]
-    return param_name
+__all__ = [
+    "module_from_param_with_module_name",
+    "param_with_module_name",
+    "user_param_name",
+]

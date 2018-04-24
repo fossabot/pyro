@@ -1,8 +1,18 @@
 run_outputs*
 .DS_Store
+.benchmarks
 data
-examples/processed
-examples/raw
+results
+examples/*/processed
+examples/*/results
+examples/*/raw
+examples/dmm/*.pkl
+pyro/contrib/examples/processed
+pyro/contrib/examples/results
+pyro/contrib/examples/raw
+pyro/_version.py
+processed
+raw
 
 # Logs
 logs
@@ -60,10 +70,13 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.pytest_cache
 nosetests.xml
 coverage.xml
 *,cover
 .hypothesis/
+*.out
+adam.unittest.save
 
 # Translations
 *.mo
@@ -81,7 +94,7 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/build/
+build/
 
 # PyBuilder
 target/
@@ -106,8 +119,9 @@ celerybeat-schedule
 venv/
 ENV/
 
-# Spyder project settings
+# IDE settings
 .spyderproject
+.idea
 
 # Rope project settings
 .ropeproject
