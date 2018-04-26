@@ -2,6 +2,11 @@ import sphinx_rtd_theme
 import re
 import os
 import sys
+if 'READTHEDOCS' in os.environ:
+    os.system('pip install pyro-ppl')
+from pyro import __version__
+print(__version__)
+
 
 # import pkg_resources
 
